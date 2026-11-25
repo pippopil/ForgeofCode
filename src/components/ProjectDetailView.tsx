@@ -11,8 +11,21 @@ import {
   Wand2,
 } from 'lucide-react';
 import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import {
+  buildIterationBudgetSeries,
   formatIterationLogsTxt,
   getIterationLogSummaries,
+  type IterationCostPoint,
 } from '../../shared/projectAnalytics';
 import { api } from '../api';
 import {
@@ -23,12 +36,11 @@ import {
   type ProjectDetailResponse,
   type ReviewOutput,
 } from '../types';
-import { BudgetIterationChart } from './BudgetIterationChart';
 import { CodeViewer } from './CodeViewer';
 
 interface ProjectDetailViewProps {
   projectId: string;
-  detail: ProjectDetailResponse | null;
+  projectDetail: ProjectDetailResponse | null;
   loading: boolean;
   onRefresh: () => Promise<void>;
 }
@@ -57,7 +69,7 @@ function getRoleAccent(role: string): string {
 
 export function ProjectDetailView({
   projectId,
-  detail,
+  projectDetail,
   loading,
   onRefresh,
 }: ProjectDetailViewProps) {
@@ -71,25 +83,29 @@ export function ProjectDetailView({
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [expandedEventId, setExpandedEventId] = useState<number | null>(null);
-  const [selectedLogIteration, setSelectedLogIteration] = useState<number>(0);
+  const [customLogIteration, setCustomLogIteration] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!detail?.files.length) {
+    setCustomLogIteration(null);
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!projectDetail?.files.length) {
       setSelectedFile('');
       setFileContent('');
       return;
     }
-    const stillExists = detail.files.some((f) => f.path === selectedFile);
+    const stillExists = projectDetail.files.some((f) => f.path === selectedFile);
     if (!selectedFile || !stillExists) {
       const preferred =
-        detail.files.find((f) =>
+        projectDetail.files.find((f) =>
           /src\/App\.tsx|src\/app\.ts|app\/main\.py|Main\.kt|package\.json/.test(f.path)
-        ) ?? detail.files[0];
+        ) ?? projectDetail.files[0];
       if (preferred) {
         setSelectedFile(preferred.path);
       }
     }
-  }, [detail?.files, selectedFile]);
+  }, [projectDetail?.files, selectedFile]);
 
   useEffect(() => {
     if (!selectedFile || viewerMode !== 'code') return;
@@ -111,55 +127,58 @@ export function ProjectDetailView({
     return () => {
       active = false;
     };
-  }, [projectId, selectedFile, viewerMode, detail?.project.updated_at]);
+  }, [projectId, selectedFile, viewerMode, projectDetail?.project.updated_at]);
 
   const parsedPlan = useMemo<PlanOutput | null>(() => {
-    if (!detail?.project.plan_json) return null;
+    if (!projectDetail?.project.plan_json) return null;
     try {
-      return JSON.parse(detail.project.plan_json) as PlanOutput;
+      return JSON.parse(projectDetail.project.plan_json) as PlanOutput;
     } catch {
       return null;
     }
-  }, [detail?.project.plan_json]);
+  }, [projectDetail?.project.plan_json]);
 
   const parsedReview = useMemo<ReviewOutput | null>(() => {
-    if (!detail?.project.review_json) return null;
+    if (!projectDetail?.project.review_json) return null;
     try {
-      return JSON.parse(detail.project.review_json) as ReviewOutput;
+      return JSON.parse(projectDetail.project.review_json) as ReviewOutput;
     } catch {
       return null;
     }
-  }, [detail?.project.review_json]);
+  }, [projectDetail?.project.review_json]);
 
   const iterationSummaries = useMemo(
     () =>
-      detail
-        ? getIterationLogSummaries(detail.commandRuns, detail.project.iteration)
+      projectDetail
+        ? getIterationLogSummaries(projectDetail.commandRuns, projectDetail.project.iteration)
         : [{ iteration: 0, count: 0 }],
-    [detail]
+    [projectDetail]
   );
 
-  useEffect(() => {
-    if (!detail) return;
-    const exists = iterationSummaries.some((s) => s.iteration === selectedLogIteration);
-    if (!exists) {
-      setSelectedLogIteration(detail.project.iteration);
+  const activeLogIteration = useMemo(() => {
+    if (!projectDetail) return 0;
+    if (
+      customLogIteration !== null &&
+      iterationSummaries.some((s) => s.iteration === customLogIteration)
+    ) {
+      return customLogIteration;
     }
-  }, [detail, iterationSummaries, selectedLogIteration]);
+    return projectDetail.project.iteration;
+  }, [customLogIteration, projectDetail, iterationSummaries]);
 
-  if (loading && !detail) {
+  if (loading && !projectDetail) {
     return (
       <div className="p-8 text-sm text-[#94A3B8]">Загрузка рабочего пространства проекта...</div>
     );
   }
 
-  if (!detail) {
+  if (!projectDetail) {
     return (
       <div className="p-8 text-sm text-[#F87171]">Проект не найден или был удалён.</div>
     );
   }
 
-  const { project, events, commandRuns, stackErrors, files, diff } = detail;
+  const { project, events, commandRuns, stackErrors, files, diff } = projectDetail;
   const isRunningOrQueued = project.status === 'running' || project.status === 'queued';
   const canResume =
     project.status === 'paused' ||
@@ -192,7 +211,7 @@ export function ProjectDetailView({
     });
   }
 
-  function handleDownloadIterationLogsTxt() {
+  function handleDownloadLogs() {
     const content = formatIterationLogsTxt({
       project: {
         id: project.id,
@@ -201,14 +220,14 @@ export function ProjectDetailView({
         status: project.status,
         stage: project.stage,
       },
-      iteration: selectedLogIteration,
+      iteration: activeLogIteration,
       commandRuns,
     });
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${project.id}-iter-${selectedLogIteration}-logs.txt`;
+    link.download = `${project.id}-iter-${activeLogIteration}-logs.txt`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -498,8 +517,8 @@ export function ProjectDetailView({
       </div>
 
       {/* График расходования бюджета по итерациям в реальном времени */}
-      <BudgetIterationChart
-        events={events}
+      <BudgetChart
+        events={projectDetail.events}
         currentIteration={project.iteration}
         budgetRub={project.budget_rub}
         spentRub={project.spent_rub}
@@ -540,8 +559,8 @@ export function ProjectDetailView({
             <select
               id="log-iteration-select"
               aria-label="Выбор итерации для скачивания логов"
-              value={selectedLogIteration}
-              onChange={(e) => setSelectedLogIteration(Number(e.target.value))}
+              value={activeLogIteration}
+              onChange={(e) => setCustomLogIteration(Number(e.target.value))}
               className="px-2.5 py-1.5 rounded-md bg-[#0B0F17] border border-[#1E293B] text-xs font-mono tabular-nums text-[#F8FAFC] focus:outline-none focus:border-[#2563EB]"
             >
               {iterationSummaries.map((item) => (
@@ -552,11 +571,12 @@ export function ProjectDetailView({
             </select>
             <button
               type="button"
-              onClick={handleDownloadIterationLogsTxt}
+              onClick={handleDownloadLogs}
+              aria-label="Скачать логи"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-[#1E293B] bg-[#0B0F17] hover:bg-[#1E293B] text-xs font-medium text-[#E2E8F0] transition-colors cursor-pointer whitespace-nowrap shrink-0"
             >
               <Download className="w-3.5 h-3.5 text-[#60A5FA]" />
-              <span>Скачать логи (.txt)</span>
+              <span>Скачать логи</span>
             </button>
           </div>
         </div>
@@ -707,3 +727,139 @@ function CommandRunsList({
     </div>
   );
 }
+
+interface BudgetChartProps {
+  events: AgentEventDTO[];
+  currentIteration: number;
+  budgetRub: number;
+  spentRub: number;
+}
+
+interface BudgetChartTooltipProps {
+  active?: boolean;
+  payload?: Array<{ payload: IterationCostPoint }>;
+}
+
+function CustomBudgetTooltip({ active, payload }: BudgetChartTooltipProps) {
+  if (!active || !payload || payload.length === 0) return null;
+  const point = payload[0].payload;
+  return (
+    <div className="bg-[#0F172A] border border-[#1E293B] rounded-lg px-3 py-2.5 text-xs space-y-1 shadow-lg">
+      <div className="font-semibold text-[#F8FAFC]">{point.label}</div>
+      <div className="font-mono tabular-nums text-[#38BDF8]">
+        Накопительно: {point.cumulativeRub.toFixed(2)} ₽
+      </div>
+      <div className="font-mono tabular-nums text-[#4ADE80]">
+        За итерацию: {point.iterationCostRub.toFixed(2)} ₽
+      </div>
+      <div className="border-t border-[#1E293B] pt-1 mt-1 space-y-0.5 text-[11px] font-mono tabular-nums text-[#94A3B8]">
+        <div>Архитектор: {point.architectRub.toFixed(2)} ₽</div>
+        <div>Кодер: {point.coderRub.toFixed(2)} ₽</div>
+        <div>Ревьюер: {point.reviewerRub.toFixed(2)} ₽</div>
+        <div>Токены: {point.tokensTotal.toLocaleString('ru-RU')}</div>
+      </div>
+    </div>
+  );
+}
+
+export function BudgetChart({
+  events,
+  currentIteration,
+  budgetRub,
+  spentRub,
+}: BudgetChartProps) {
+  const data = useMemo(
+    () => buildIterationBudgetSeries(events, currentIteration, budgetRub),
+    [events, currentIteration, budgetRub]
+  );
+
+  const effectiveSpent = Math.max(
+    spentRub,
+    data.length > 0 ? data[data.length - 1].cumulativeRub : 0
+  );
+  const usedPct = budgetRub > 0 ? Math.min(100, Math.round((effectiveSpent / budgetRub) * 100)) : 0;
+  const maxCumulative = data.reduce((m, d) => Math.max(m, d.cumulativeRub), 0);
+  const yMax = Math.max(1, Math.ceil(Math.max(maxCumulative, budgetRub) * 1.1));
+
+  return (
+    <section
+      aria-label="Линейный график расходования бюджета по итерациям"
+      className="bg-[#111827] border border-[#1E293B] rounded-xl p-4 space-y-3"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-xs font-semibold text-[#F8FAFC]">
+            Расход бюджета проекта по итерациям (₽)
+          </h2>
+          <p className="text-[11px] text-[#94A3B8] mt-0.5">
+            Линейный график накопительного и пошагового расхода в реальном времени по WebSocket
+          </p>
+        </div>
+        <div className="text-xs font-mono tabular-nums text-[#CBD5E1]">
+          Использовано: <strong className="text-[#F8FAFC]">{effectiveSpent.toFixed(2)} ₽</strong> /{' '}
+          {budgetRub.toFixed(0)} ₽ ({usedPct}%)
+        </div>
+      </div>
+
+      <div className="h-[220px] w-full" data-testid="budget-iteration-chart">
+        <ResponsiveContainer width="100%" height={220}>
+          <LineChart data={data} margin={{ top: 14, right: 16, left: 0, bottom: 0 }}>
+            <CartesianGrid stroke="#1E293B" strokeDasharray="3 3" vertical={false} />
+            <XAxis
+              dataKey="label"
+              stroke="#64748B"
+              tick={{ fill: '#94A3B8', fontSize: 11 }}
+              axisLine={{ stroke: '#1E293B' }}
+              tickLine={false}
+            />
+            <YAxis
+              domain={[0, yMax]}
+              stroke="#64748B"
+              tick={{ fill: '#94A3B8', fontSize: 11 }}
+              axisLine={{ stroke: '#1E293B' }}
+              tickLine={false}
+              tickFormatter={(v) => `${v} ₽`}
+              width={56}
+            />
+            <Tooltip content={<CustomBudgetTooltip />} />
+            <Legend
+              wrapperStyle={{ fontSize: '11px', color: '#CBD5E1', paddingTop: '6px' }}
+            />
+            <ReferenceLine
+              y={budgetRub}
+              stroke="#DC2626"
+              strokeDasharray="4 4"
+              label={{
+                value: `Лимит ${budgetRub} ₽`,
+                position: 'insideTopRight',
+                fill: '#FCA5A5',
+                fontSize: 11,
+              }}
+            />
+            <Line
+              type="monotone"
+              dataKey="cumulativeRub"
+              name="Накопительный расход (₽)"
+              stroke="#38BDF8"
+              strokeWidth={2.5}
+              dot={{ r: 4, fill: '#38BDF8', strokeWidth: 0 }}
+              activeDot={{ r: 6, fill: '#F8FAFC' }}
+              isAnimationActive={false}
+            />
+            <Line
+              type="monotone"
+              dataKey="iterationCostRub"
+              name="Расход за итерацию (₽)"
+              stroke="#4ADE80"
+              strokeWidth={2}
+              dot={{ r: 3.5, fill: '#4ADE80', strokeWidth: 0 }}
+              activeDot={{ r: 5 }}
+              isAnimationActive={false}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </section>
+  );
+}
+

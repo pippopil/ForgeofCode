@@ -172,3 +172,27 @@ export function formatIterationLogsTxt(params: {
 
   return lines.join('\n');
 }
+
+/** Применяет новое WebSocket-событие project:event к состоянию projectDetail без дублирования и двойного учёта расхода */
+export function mergeProjectEventIntoState<
+  TEvent extends { id: number; iteration: number; cost_rub: number },
+  TDetail extends { project: { spent_rub: number; iteration: number }; events: TEvent[] }
+>(prev: TDetail, event: TEvent): TDetail {
+  if (prev.events.some((e) => e.id === event.id)) {
+    return prev;
+  }
+  const nextEvents = [...prev.events, event];
+  const eventsTotal = roundRub(
+    nextEvents.reduce((sum, item) => sum + Math.max(0, item.cost_rub || 0), 0)
+  );
+  return {
+    ...prev,
+    project: {
+      ...prev.project,
+      spent_rub: Math.max(prev.project.spent_rub, eventsTotal),
+      iteration: Math.max(prev.project.iteration, Math.max(0, event.iteration)),
+    },
+    events: nextEvents,
+  };
+}
+

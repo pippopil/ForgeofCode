@@ -4,6 +4,7 @@ import {
   buildIterationBudgetSeries,
   formatIterationLogsTxt,
   getIterationLogSummaries,
+  mergeProjectEventIntoState,
 } from './projectAnalytics';
 
 test('buildIterationBudgetSeries aggregates per-iteration and cumulative ruble spend', () => {
@@ -97,3 +98,29 @@ test('formatIterationLogsTxt filters runs by iteration and formats stdout/stderr
   assert.ok(txtIter0.includes('npx vitest run'));
   assert.ok(!txtIter0.includes('dist/index.html'));
 });
+
+test('mergeProjectEventIntoState deduplicates events and avoids double-counting spent_rub', () => {
+  const initial = {
+    project: { spent_rub: 0, iteration: 0 },
+    events: [] as Array<{ id: number; iteration: number; cost_rub: number }>,
+  };
+
+  const afterFirst = mergeProjectEventIntoState(initial, { id: 1, iteration: 0, cost_rub: 2.5 });
+  assert.equal(afterFirst.events.length, 1);
+  assert.equal(afterFirst.project.spent_rub, 2.5);
+
+  // Duplicate ID must be ignored
+  const afterDup = mergeProjectEventIntoState(afterFirst, { id: 1, iteration: 0, cost_rub: 2.5 });
+  assert.equal(afterDup, afterFirst);
+
+  // Simulate project:updated arriving prior to project:event with spent_rub already at 7.5
+  const preUpdated = {
+    ...afterFirst,
+    project: { spent_rub: 7.5, iteration: 1 },
+  };
+  const afterSecond = mergeProjectEventIntoState(preUpdated, { id: 2, iteration: 1, cost_rub: 5.0 });
+  assert.equal(afterSecond.events.length, 2);
+  assert.equal(afterSecond.project.spent_rub, 7.5);
+  assert.equal(afterSecond.project.iteration, 1);
+});
+

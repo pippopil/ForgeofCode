@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { mergeProjectEventIntoState } from '../shared/projectAnalytics';
 import { api, setAuthToken } from './api';
 import { AuthScreen } from './components/AuthScreen';
 import { NewProjectView } from './components/NewProjectView';
@@ -81,8 +82,17 @@ export default function App() {
   const loadProjectDetail = useCallback(async (id: string) => {
     setDetailLoading(true);
     try {
-      const detail = await api.getProjectDetail(id);
-      setProjectDetail(detail);
+      const fetched = await api.getProjectDetail(id);
+      setProjectDetail((prev) => {
+        if (!prev || prev.project.id !== fetched.project.id) {
+          return fetched;
+        }
+        let merged = fetched;
+        for (const ev of prev.events) {
+          merged = mergeProjectEventIntoState(merged, ev);
+        }
+        return merged;
+      });
     } catch {
       setProjectDetail(null);
     } finally {
@@ -178,18 +188,9 @@ export default function App() {
             } else if (msg.type === 'project:event' && msg.data) {
               const event = msg.data as AgentEventDTO;
               if (event.project_id === selectedProjectRef.current) {
-                setProjectDetail((prev) => {
-                  if (!prev) return prev;
-                  if (prev.events.some((e) => e.id === event.id)) return prev;
-                  const nextSpent =
-                    Math.round((prev.project.spent_rub + (event.cost_rub || 0)) * 10000) /
-                    10000;
-                  return {
-                    ...prev,
-                    project: { ...prev.project, spent_rub: nextSpent },
-                    events: [...prev.events, event],
-                  };
-                });
+                setProjectDetail((prev) =>
+                  prev ? mergeProjectEventIntoState(prev, event) : prev
+                );
               }
             } else if (msg.type === 'project:command' && msg.data) {
               const cmd = msg.data as CommandRunDTO;
@@ -331,7 +332,7 @@ export default function App() {
           {screen === 'detail' && selectedProjectId && (
             <ProjectDetailView
               projectId={selectedProjectId}
-              detail={projectDetail}
+              projectDetail={projectDetail}
               loading={detailLoading}
               onRefresh={() => loadProjectDetail(selectedProjectId)}
             />
