@@ -1,0 +1,14 @@
+{
+  "name": "codeforge-runner",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "tsx server.ts"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "tsx": "^4.21.0",
+    "zod": "^3.24.1"
+  }
+}

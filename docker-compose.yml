@@ -1,0 +1,109 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: ["local", "public"]
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - PORT=3000
+      - RUNNER_MODE=docker
+      - RUNNER_INSTALL_URL=http://runner-install:4001
+      - RUNNER_EXEC_URL=http://runner-exec:4002
+      - DATA_DIR=/app/data
+      - WORK_DIR=/app/work
+      - TEMPLATES_DIR=/app/templates
+    volumes:
+      - ./data:/app/data
+      - ./work:/app/work
+    ports:
+      - "127.0.0.1:8080:3000"
+    depends_on:
+      - runner-install
+      - runner-exec
+    networks:
+      - app_net
+      - runner_internal_net
+
+  runner-install:
+    build:
+      context: .
+      dockerfile: runner/Dockerfile
+    profiles: ["local", "public"]
+    restart: unless-stopped
+    environment:
+      - RUNNER_PORT=4001
+      - RUNNER_ROLE=install
+      - WORK_DIR=/work
+    volumes:
+      - ./work:/work
+      - npm-cache:/cache/npm
+      - pip-cache:/cache/pip
+      - gradle-cache:/cache/gradle
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 2g
+    pids_limit: 256
+    networks:
+      - app_net
+      - runner_egress_net
+
+  runner-exec:
+    build:
+      context: .
+      dockerfile: runner/Dockerfile
+    profiles: ["local", "public"]
+    restart: unless-stopped
+    environment:
+      - RUNNER_PORT=4002
+      - RUNNER_ROLE=exec
+      - WORK_DIR=/work
+    volumes:
+      - ./work:/work
+      - npm-cache:/cache/npm
+      - pip-cache:/cache/pip
+      - gradle-cache:/cache/gradle
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 2g
+    pids_limit: 256
+    networks:
+      - runner_internal_net
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["public"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+    networks:
+      - app_net
+
+volumes:
+  npm-cache:
+  pip-cache:
+  gradle-cache:
+  caddy-data:
+  caddy-config:
+
+networks:
+  app_net:
+    driver: bridge
+  runner_egress_net:
+    driver: bridge
+  runner_internal_net:
+    driver: bridge
+    internal: true
